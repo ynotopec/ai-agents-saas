@@ -201,7 +201,7 @@ def render_deployment(name, namespace, subdomain, instance_hash, *, secret_name=
               {"name": "HERMES_CONFIG", "value": "/etc/hermes-config/config.yaml"}]
     env = common + [{"name": key, "value": os.environ.get(key, default)} for key, default in (
         ("LLM_BASE_URL", "https://api-nothink.ailab.infocepo.com/v1"),
-        ("LLM_API_KEY", ""), ("LLM_PROVIDER", "infocepo-alias"), ("LLM_MODEL", "ai-thinking"),
+        ("LLM_PROVIDER", "infocepo-alias"), ("LLM_MODEL", "ai-thinking"),
         ("HERMES_ALLOW_ROOT_GATEWAY", "1"), ("HERMES_ACCEPT_HOOKS", "1"),
         ("HERMES_DONT_CHECK_TTY", "1"),
         ("MCP_DISABLE", "1"),
@@ -209,6 +209,8 @@ def render_deployment(name, namespace, subdomain, instance_hash, *, secret_name=
     if llm_env:
         for key, value in llm_env.items():
             env = _put(env, {"name": key, "value": value})
+    env = _put(env, {"name": "LLM_API_KEY", "valueFrom": {"secretKeyRef":
+                     {"name": name + "-config", "key": "LLM_API_KEY"}}})
     spec = {
         "securityContext": {"fsGroup": 1000, "runAsUser": 1000, "runAsGroup": 1000},
         "initContainers": [{"name": "init-hermes-home", "image": "alpine:3.19",
@@ -246,14 +248,15 @@ def render_deployment(name, namespace, subdomain, instance_hash, *, secret_name=
                            "limits": {"cpu": "500m", "memory": "2Gi"}}}],
         "volumes": [{"name": "hermes-home", "persistentVolumeClaim": {"claimName": name + "-data"}},
                     {"name": "workspace-data", "persistentVolumeClaim": {"claimName": name + "-workspace"}},
-                    {"name": "hermes-config", "configMap": {"name": name + "-config"}}],
+                    {"name": "hermes-config", "secret": {"secretName": name + "-config",
+                     "items": [{"key": "config.yaml", "path": "config.yaml"}]}}],
     }
     labels = {"app": "agent-instance", "agent-instance": subdomain, "agent-hash": instance_hash}
     return {"apiVersion": "v1", "kind": "List", "items": [{
         "apiVersion": "apps/v1", "kind": "Deployment",
         "metadata": {"name": name, "namespace": namespace, "labels": labels},
         "spec": {"replicas": 1, "progressDeadlineSeconds": 1800, "strategy": {"type": "Recreate"},
-                 "selector": {"matchLabels": {"app": "agent-instance", "agent-instance": subdomain}},
+                 "selector": {"matchLabels": labels},
                  "template": {"metadata": {"labels": labels}, "spec": repair_pod_spec(
                      spec, name, password_secret=secret_name, gateway_secret=secret_name, images=(agent_image, webui_image))}}}]}
 
