@@ -45,16 +45,6 @@ spec:
           value: "ai-thinking"
         - name: LLM_CONTEXT_LENGTH
           value: "262144"
-        - name: API_SERVER_KEY
-          valueFrom:
-            secretKeyRef:
-              name: agents-saas-secrets
-              key: API_SERVER_KEY
-        - name: HERMES_WEBUI_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: agents-saas-secrets
-              key: HERMES_WEBUI_PASSWORD
         resources:
           limits:
             cpu: "500m"

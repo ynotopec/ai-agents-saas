@@ -11,7 +11,7 @@ Dashboard FastAPI pour gérer des instances Hermes sur Kubernetes. Crée, liste 
 - **Un Deployment par instance** nommé `agent-{hash8}-{subdomain}` (ex: `agent-9ae62006-vjourne-agent`).
 - **3 containers par pod** : hermes-agent (port 8642), hermes-dashboard (port 9119), hermes-webui (port 8787).
 - **2 PVCs** : `{name}-data` (config, sessions), `{name}-workspace` (fichiers de travail).
-- **1 ConfigMap** : `{name}-config` (config.yaml générée depuis les variables d'environnement).
+- **2 Secrets par instance** pour la configuration LLM et les identifiants WebUI/passerelle. Une ConfigMap réserve le sous-domaine.
 - **1 Ingress** par instance avec cert-manager TLS sur `*.ailab.infocepo.com`.
 - **Isolation Kubernetes** : les pods Hermes ne montent aucun token de ServiceAccount et ne peuvent donc pas réutiliser les droits Kubernetes du namespace.
 
@@ -22,6 +22,7 @@ Dashboard FastAPI pour gérer des instances Hermes sur Kubernetes. Crée, liste 
 ```bash
 cd agent-saas
 pip install fastapi uvicorn pydantic argon2-cffi
+read -rsp "DEPLOY_TOKEN: " DEPLOY_TOKEN && export DEPLOY_TOKEN
 python3 app.py
 # Dashboard accessible sur http://localhost:8000
 ```
@@ -36,9 +37,7 @@ Voir [DEPLOY_GUIDE.md](./DEPLOY_GUIDE.md) pour l'installation complète sur un c
 kubectl apply -f manifests/01-rbac.yaml -n demo1
 kubectl -n demo1 create secret generic agents-saas-secrets \
   --from-literal=LLM_API_KEY='<llm-api-key>' \
-  --from-literal=API_SERVER_KEY='<random-api-server-key>' \
-  --from-literal=DEPLOY_TOKEN='<random-dashboard-token>' \
-  --from-literal=HERMES_WEBUI_PASSWORD='<initial-instance-password>'
+  --from-literal=DEPLOY_TOKEN='<random-dashboard-token>'
 kubectl -n demo1 create configmap agents-saas-release \
   --from-file=hermes-images.json=releases/hermes-images.json \
   --dry-run=client -o yaml | kubectl apply -f -
@@ -57,16 +56,9 @@ kubectl -n demo1 rollout status deploy/agents-saas --timeout=60s
 
 ### Choisir le mot de passe à la création
 
-Le formulaire accepte un **mot de passe personnalisé facultatif**, avec
-confirmation et bouton d’affichage. Les deux champs vides utilisent le mot de
-passe par défaut `HERMES_WEBUI_PASSWORD` du SaaS, sans le préremplir ni le renvoyer
-au navigateur. Un mot de passe personnalisé doit être confirmé à l’identique
-et contenir au moins quatre caractères, comme pour la modification existante.
-Il est enregistré dans le Secret runtime de cette seule instance.
-
-L’API `/api/deploy` accepte aussi `password` et `password_confirmation` ; les
-anciens appels avec seulement `subdomain` continuent à utiliser le défaut.
-Les saisies incorrectes sont rejetées avant toute création Kubernetes.
+Le navigateur demande le compte `admin` et le jeton `DEPLOY_TOKEN` via HTTPS.
+Le formulaire demande ensuite le mot de passe propre à la nouvelle instance et sa confirmation.
+Les clients API transmettent le jeton dans `X-Deploy-Token`.
 
 ### Corriger les instances Hermes existantes
 
@@ -108,7 +100,7 @@ Déploie une nouvelle instance agent.
 curl -X POST http://localhost:8000/api/deploy \
   -H "Content-Type: application/json" \
   -H "X-Deploy-Token: $DEPLOY_TOKEN" \
-  -d '{"subdomain": "my-agent"}'
+  -d '{"subdomain": "my-agent","password":"<mot-de-passe>","password_confirmation":"<mot-de-passe>"}'
 ```
 
 Réponse :
@@ -126,7 +118,7 @@ Réponse :
 Liste toutes les instances déployées.
 
 ```bash
-curl http://localhost:8000/api/instances
+curl -H "X-Deploy-Token: $DEPLOY_TOKEN" http://localhost:8000/api/instances
 ```
 
 ### `GET /health`
@@ -148,7 +140,8 @@ L'application se configure via des variables d'environnement :
 | `LLM_API_KEY` | (secret) | Clé API LLM |
 | `LLM_PROVIDER` | `infocepo-alias` | Nom du provider |
 | `LLM_MODEL` | `ai-thinking` | Modèle par défaut |
-| `API_SERVER_KEY` | (secret) | Clé d'auth API Server |
+| `EXPOSE_GATEWAY_INGRESS` | `false` | Publier la passerelle API des nouvelles instances |
+| `WEB_EXTRACT_PROXY` | vide | Proxy filtrant obligatoire pour activer l’extraction |
 | `DEPLOY_TOKEN` | (secret) | Token de déploiement |
 
 ## Structure

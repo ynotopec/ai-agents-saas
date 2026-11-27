@@ -24,12 +24,10 @@ Ne stockez jamais les vraies valeurs dans Git. Créez le Secret directement dans
 kubectl create namespace demo1 --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n demo1 create secret generic agents-saas-secrets \
   --from-literal=LLM_API_KEY='<llm-api-key>' \
-  --from-literal=API_SERVER_KEY='<random-api-server-key>' \
-  --from-literal=DEPLOY_TOKEN='<random-dashboard-token>' \
-  --from-literal=HERMES_WEBUI_PASSWORD='<initial-instance-password>'
+  --from-literal=DEPLOY_TOKEN='<random-dashboard-token>'
 ```
 
-Générez des valeurs aléatoires longues pour `API_SERVER_KEY`, `DEPLOY_TOKEN` et `HERMES_WEBUI_PASSWORD`. Si une valeur précédemment publiée a été utilisée, révoquez-la et faites-en la rotation.
+Générez un `DEPLOY_TOKEN` aléatoire long. Chaque création génère sa propre clé de passerelle. Si une valeur précédemment publiée a été utilisée, révoquez-la et faites-en la rotation.
 
 ## 2. Installer les ressources
 
@@ -74,10 +72,10 @@ Les opérations qui modifient le cluster exigent le jeton `DEPLOY_TOKEN` dans l'
 curl -X POST https://agents-saas.ailab.infocepo.com/api/deploy \
   -H 'Content-Type: application/json' \
   -H 'X-Deploy-Token: <random-dashboard-token>' \
-  -d '{"subdomain":"my-agent"}'
+  -d '{"subdomain":"my-agent","password":"<mot-de-passe>","password_confirmation":"<mot-de-passe>"}'
 ```
 
-Le formulaire Web demande le même jeton. L'endpoint `GET /health` reste public pour les probes Kubernetes.
+Dans le navigateur, utilisez le compte `admin` et le jeton comme mot de passe, sur HTTPS. L'endpoint `GET /health` reste public pour les probes Kubernetes.
 
 ## Mise à jour
 
@@ -92,3 +90,15 @@ kubectl create configmap agents-saas-app \
 kubectl -n demo1 rollout restart deployment/agents-saas
 kubectl -n demo1 rollout status deployment/agents-saas --timeout=180s
 ```
+
+## Migration de sécurité
+
+1. Suspendre les créations pendant la mise à jour du dashboard et du script CLI. Réappliquer le Role et le Deployment, mettre à jour le ConfigMap applicatif et redémarrer le dashboard. Les anciens provisionneurs ne respectent pas les réservations de noms.
+2. Pour chaque instance existante, identifier le Deployment et ses PVC. Vérifier l’unicité du sous-domaine et les endpoints du Service avant d’ajouter le label `agent-hash` du pod à son sélecteur. Conserver le sélecteur immuable du Deployment existant.
+3. Générer une clé de passerelle distincte par instance. Mettre à jour le Secret référencé par l’agent, le dashboard, la WebUI et l’init de réconciliation, puis redémarrer le Deployment et mettre à jour les clients API. Vérifier le refus de l’ancienne clé. Les nouveaux Ingress de passerelle sont optionnels (`EXPOSE_GATEWAY_INGRESS=true` sur le dashboard). Examiner séparément les Ingress existants.
+4. Pour le LLM, préparer une nouvelle clé fournisseur. Placer la configuration et la clé dans un Secret, monter uniquement `config.yaml` et utiliser `secretKeyRef` pour `LLM_API_KEY`. Après vérification des instances et du dashboard avec la nouvelle clé, révoquer l’ancienne et retirer les anciennes ConfigMaps. Contrôler aussi les copies de configuration sur PVC et les anciennes révisions.
+5. Pour réutiliser un sous-domaine après suppression ou échec partiel, lire le champ `data.owner` de la ConfigMap `agent-domain-<sous-domaine>`. Inventorier les ressources de ce propriétaire et traiter ses PVC selon la politique de conservation. Supprimer la réservation en dernier, une fois le nom libéré.
+
+### Extraction web
+
+Le dashboard renvoie HTTP 503 tant que `WEB_EXTRACT_PROXY` est vide. Pour activer l’extraction, configurer sur le Deployment l’URL d’un proxy de sortie qui résout lui-même les destinations et refuse les adresses privées, locales, de métadonnées et les réseaux internes, IPv4 et IPv6, au moment de la connexion. Un proxy ouvert ne protège pas le réseau interne. L’API exige le jeton administrateur. Elle accepte huit URL HTTPS sur le port 443 par lot, ignore les redirections, limite chaque réponse à 1 Mio et traite deux lots simultanés par processus. Le relais historique `TRAFILATURA_LOCAL_URL` est remplacé par cette configuration.

@@ -22,7 +22,7 @@ def client(monkeypatch, release):
     """Test client with test config."""
     monkeypatch.setattr(app_module, "DEPLOY_TOKEN", "test-deploy-token")
     monkeypatch.setattr(app_module, "HERMES_WEBUI_PASSWORD", "test-webui-password")
-    monkeypatch.setattr(app_module, "API_SERVER_KEY", "test-api-server-key")
+    monkeypatch.setattr(app_module, "k8s_get", lambda *args, **kwargs: {"items": []})
     monkeypatch.setattr(app_module, "LLM_API_KEY", "test-llm-key")
     monkeypatch.setattr(app_module, "LLM_PROVIDER", "test-provider")
     monkeypatch.setattr(app_module, "LLM_MODEL", "test-model")
@@ -165,12 +165,8 @@ class TestChangePasswordEndpoint:
     @patch("app.k8s_post")
     def test_change_password_creates_secret(self, mock_k8s_post, mock_k8s_get, mock_patch, client):
         """POST /api/change-password should return success when called with valid data."""
-        mock_k8s_get.side_effect = [
-            {"items": [{"metadata": {"name": "agent-abc-test-12345-abcde", "labels": {"app": "agent-instance"}}}]},
-            {"metadata": {"resourceVersion": "42"}, "spec": {"template": {"spec": {
-                "containers": [{"name": "hermes-webui", "env": []}]
-            }}}},
-        ]
+        mock_k8s_get.return_value = {"items": [{"metadata": {"name": "agent-abc-test", "resourceVersion": "42"},
+            "spec": {"template": {"spec": {"containers": [{"name": "hermes-webui", "env": []}]}}}}]}
         response = client.post(
             "/api/change-password",
             headers=AUTH_HEADERS,
@@ -188,10 +184,8 @@ class TestChangePasswordEndpoint:
     @patch("app.k8s_get")
     @patch("app.k8s_post")
     def test_failed_password_rollout_is_not_reported_as_success(self, create, get, patch_deployment, client):
-        get.side_effect = [
-            {"items": [{"metadata": {"name": "agent-abc-test-12345-abcde"}}]},
-            {"spec": {"template": {"spec": {"containers": [{"name": "hermes-webui"}]}}}},
-        ]
+        get.return_value = {"items": [{"metadata": {"name": "agent-abc-test"},
+            "spec": {"template": {"spec": {"containers": [{"name": "hermes-webui"}]}}}}]}
         response = client.post("/api/change-password", headers=AUTH_HEADERS,
                                json={"subdomain": "test", "new_password": "newsecret123"})
         assert response.status_code == 502
@@ -231,139 +225,63 @@ class TestChangePasswordEndpoint:
         assert response.status_code == 400
 
 
-class TestWebExtractEndpoint:
-    """Tests for the POST /api/web-extract endpoint."""
-
-    def test_web_extract_empty_urls(self, client):
-        """Web extract with empty URL list should return empty results."""
-        response = client.post(
-            "/api/web-extract",
-            json={"urls": []},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["results"] == []
-
-    @patch("httpx.Client")
-    @patch("trafilatura.extract", return_value="This is test content for extraction. More lines to make it substantial enough.")
-    def test_web_extract_returns_content_on_success(self, mock_extract, mock_client_class, client):
-        """Web extract should return extracted content for successful URLs."""
-        from unittest.mock import MagicMock
-
-        mock_response = MagicMock()
-        mock_response.text = "<html><body><p>This is test content for extraction. More lines to make it substantial enough.</p></body></html>"
-        mock_response.raise_for_status = MagicMock()
-        mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client_class.return_value = mock_client
-
-        response = client.post(
-            "/api/web-extract",
-            json={"urls": ["https://example.com/test"]},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["results"]) == 1
-        assert data["results"][0]["error"] is None
-        assert "test content" in data["results"][0]["content"]
-        assert data["results"][0]["metadata"]["extractor"] == "trafilatura-inline"
-
-    @patch("httpx.Client")
-    def test_web_extract_handles_failing_url(self, mock_client_class, client):
-        """Web extract should return error for URLs that fail."""
-        from unittest.mock import MagicMock
-
-        mock_client = MagicMock()
-        mock_client.get.side_effect = Exception("Connection refused")
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client_class.return_value = mock_client
-
-        response = client.post(
-            "/api/web-extract",
-            json={"urls": ["https://invalid.example.com/nonexistent"]},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["results"]) == 1
-        assert data["results"][0]["error"] is not None
-
-    @patch("httpx.Client")
-    @patch("trafilatura.extract", return_value="Test content.")
-    def test_web_extract_multiple_urls(self, mock_extract, mock_client_class, client):
-        """Web extract should handle multiple URLs in one request."""
-        from unittest.mock import MagicMock
-
-        mock_response = MagicMock()
-        mock_response.text = "<html><body><p>Test content.</p></body></html>"
-        mock_response.raise_for_status = MagicMock()
-        mock_client = MagicMock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client_class.return_value = mock_client
-
-        response = client.post(
-            "/api/web-extract",
-            json={"urls": ["https://example.com/1", "https://example.com/2"]},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["results"]) == 2
-        for r in data["results"]:
-            assert r["error"] is None
-
-    @patch("httpx.Client")
-    def test_web_extract_prefers_http_service_when_configured(self, mock_client_class, client):
-        """When TRAFILATURA_LOCAL_URL is set, HTTP service should be tried first."""
-        from unittest.mock import MagicMock
-
-        # The mock_client is for the HTTP service call
-        mock_service_response = MagicMock()
-        mock_service_response.raise_for_status = MagicMock()
-        mock_service_response.json.return_value = {
-            "results": [{"url": "https://example.com", "content": "from-service", "error": None}]
-        }
-        mock_service_client = MagicMock()
-        mock_service_client.post.return_value = mock_service_response
-        mock_service_client.__enter__ = MagicMock(return_value=mock_service_client)
-        mock_service_client.__exit__ = MagicMock(return_value=False)
-
-        mock_http_client = MagicMock()
-        mock_http_client.get.return_value = MagicMock()
-        mock_http_client.__enter__ = MagicMock(return_value=mock_http_client)
-        mock_http_client.__exit__ = MagicMock(return_value=False)
-
-        # First call is the HTTP service (POST /extract), second is inline fallback (GET url)
-        side_effects = [mock_service_client, mock_http_client]
-        call_index = [0]
-
-        def get_side_effect(*args, **kwargs):
-            idx = call_index[0]
-            call_index[0] += 1
-            return side_effects[idx] if idx < len(side_effects) else MagicMock()
-
-        mock_client_class.side_effect = get_side_effect
-
-        with patch.dict(os.environ, {"TRAFILATURA_LOCAL_URL": "http://localhost:8990"}):
-            with patch("os.environ.get", side_effect=lambda k, d="": {
-                "TRAFILATURA_LOCAL_URL": "http://localhost:8990",
-            }.get(k, d)):
-                response = client.post(
-                    "/api/web-extract",
-                    json={"urls": ["https://example.com"]},
-                )
-                assert response.status_code == 200
-                data = response.json()
-                assert len(data["results"]) == 1
-                assert data["results"][0]["error"] is None
-                assert data["results"][0]["metadata"]["extractor"] == "trafilatura-local-http"
+def test_admin_routes_require_token(client, monkeypatch):
+    assert client.get('/api/instances').status_code == 401
+    assert client.post('/api/web-extract', json={'urls': []}).status_code == 401
+    assert client.get('/', auth=('admin', 'test-deploy-token')).status_code == 200
+    assert client.post('/api/deploy', auth=('admin', 'test-deploy-token'),
+                       json={'subdomain': 'x', **VALID_PASSWORD}).status_code == 403
+    monkeypatch.setattr(app_module, 'DEPLOY_TOKEN', '')
+    assert client.get('/api/instances', headers=AUTH_HEADERS).status_code == 401
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+def test_extractor_requires_proxy_and_bounds_batch(client, monkeypatch):
+    monkeypatch.delenv('WEB_EXTRACT_PROXY', raising=False)
+    assert client.post('/api/web-extract', headers=AUTH_HEADERS, json={'urls': []}).status_code == 503
+    monkeypatch.setenv('WEB_EXTRACT_PROXY', 'http://proxy.example')
+    for urls, status in [(['http://example.org'], 400), (['https://example.org'] * 9, 422)]:
+        assert client.post('/api/web-extract', headers=AUTH_HEADERS, json={'urls': urls}).status_code == status
+
+
+def test_extractor_bounds_downloads_and_ignores_redirects(monkeypatch):
+    import httpx
+    monkeypatch.setattr(app_module, 'MAX_PAGE_BYTES', 32)
+    def handle(request):
+        if request.url.path == '/redirect':
+            return httpx.Response(302, headers={'location': '/ok'})
+        data = b'x' * 33 if request.url.path == '/large' else b'public article content'
+        return httpx.Response(200, stream=httpx.ByteStream(data))
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        results = app_module.extract_pages(client, ['https://example.org/' + path for path in
+                                           ('large', 'redirect', 'ok')], lambda data, **kw: data.decode())
+    assert [bool(item['content']) for item in results['results']] == [False, False, True]
+
+
+def test_duplicate_and_ambiguous_instances(client, monkeypatch):
+    monkeypatch.setattr(app_module, 'k8s_get', lambda *a, **kw: {'items': [{}, {}]})
+    with patch('app.k8s_post') as create:
+        assert client.post('/api/deploy', headers=AUTH_HEADERS, json={'subdomain': 'used', **VALID_PASSWORD}).status_code == 409
+        assert client.post('/api/change-password', headers=AUTH_HEADERS, json={'subdomain': 'used', 'new_password': 'newsecret'}).status_code == 409
+        create.assert_not_called()
+
+
+def test_isolated_credentials_and_selectors(client):
+    import json
+    keys = []
+    for domain in ('tenant-a', 'tenant-b'):
+        with patch('app.k8s_post') as create:
+            assert client.post('/api/deploy', headers=AUTH_HEADERS, json={'subdomain': domain, **VALID_PASSWORD}).is_success
+        objects = [c.args[1] for c in create.call_args_list]
+        assert objects[0]['metadata']['name'] == 'agent-domain-' + domain
+        keys.append(objects[1]['stringData']['API_SERVER_KEY'])
+        for obj in objects:
+            if obj['kind'] != 'Secret':
+                assert 'test-llm-key' not in json.dumps(obj)
+        dep = next(o for o in objects if o['kind'] == 'Deployment')
+        svc = next(o for o in objects if o['kind'] == 'Service')
+        assert dep['spec']['selector']['matchLabels'] == svc['spec']['selector']
+        assert 'agent-hash' in svc['spec']['selector']
+    assert keys[0] != keys[1]
 
 
 class TestRequiredCreationPassword:
@@ -415,3 +333,34 @@ class TestRequiredCreationPassword:
         request = app_module.DeployRequest(subdomain='custom', password='chosen-password',
                                            password_confirmation='chosen-password')
         assert 'chosen-password' not in repr(request)
+
+
+def test_reservation_conflict_stops_provisioning(client, monkeypatch):
+    from urllib.error import HTTPError
+    monkeypatch.setattr(app_module, "get_token", lambda: "fake-k8s-token")
+    conflict = HTTPError("https://unused", 409, "AlreadyExists", {}, None)
+    with patch("urllib.request.urlopen", side_effect=conflict) as send:
+        response = client.post("/api/deploy", headers=AUTH_HEADERS,
+                               json={"subdomain": "contended", **VALID_PASSWORD})
+    assert response.status_code == 409
+    send.assert_called_once()
+    assert send.call_args.args[0].full_url.endswith("/configmaps")
+
+
+@pytest.mark.parametrize("expose, ingress_count", [("false", 1), ("true", 2)])
+def test_browser_can_provision_and_gateway_is_optional(client, monkeypatch, expose, ingress_count):
+    monkeypatch.setenv("EXPOSE_GATEWAY_INGRESS", expose)
+    with patch("app.k8s_post") as create:
+        response = client.post("/api/deploy", auth=("admin", "test-deploy-token"),
+                               headers={"X-Dashboard-Request": "1"},
+                               json={"subdomain": "web", **VALID_PASSWORD})
+    assert response.is_success
+    assert sum(call.args[0] == "ingresses" for call in create.call_args_list) == ingress_count
+
+
+def test_startup_rejects_empty_token(monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(app_module, "DEPLOY_TOKEN", " ")
+    with pytest.raises(RuntimeError, match="DEPLOY_TOKEN"):
+        with TestClient(app):
+            pass
