@@ -44,7 +44,8 @@ const document = {getElementById(id) {
 }};
 const context = vm.createContext({document, console, assert, elements, calls,
   fetch: async (url, options) => {
-    if (url === '/api/instances') return {json: async () => []};
+    assert.equal(url, '/api/deploy');
+    assert.deepEqual(Object.keys(options.headers), ['Content-Type']);
     calls.push(JSON.parse(options.body));
     return {status: 200, json: async () => ({success: true, url: 'https://agent.example'})};
   }

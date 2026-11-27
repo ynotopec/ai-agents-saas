@@ -64,9 +64,9 @@ La commande cible le dashboard dans `demo1`. Un second passage à état identiqu
 
 ### Choisir le mot de passe à la création
 
-Le navigateur demande le compte `admin` et le jeton `DEPLOY_TOKEN` via HTTPS.
+Tout visiteur peut créer un agent depuis le formulaire public.
 Le formulaire demande ensuite le mot de passe propre à la nouvelle instance et sa confirmation.
-Les clients API transmettent le jeton dans `X-Deploy-Token`.
+L’inventaire, la réinitialisation des mots de passe et l’extraction web exigent une authentification administrateur.
 
 ### Corriger les instances Hermes existantes
 
@@ -107,7 +107,6 @@ Déploie une nouvelle instance agent.
 ```bash
 curl -X POST http://localhost:8000/api/deploy \
   -H "Content-Type: application/json" \
-  -H "X-Deploy-Token: $DEPLOY_TOKEN" \
   -d '{"subdomain": "my-agent","password":"<mot-de-passe>","password_confirmation":"<mot-de-passe>"}'
 ```
 
@@ -150,7 +149,7 @@ L'application se configure via des variables d'environnement :
 | `LLM_MODEL` | `ai-thinking` | Modèle par défaut |
 | `EXPOSE_GATEWAY_INGRESS` | `false` | Publier la passerelle API des nouvelles instances |
 | `WEB_EXTRACT_PROXY` | vide | Proxy filtrant obligatoire pour activer l’extraction |
-| `DEPLOY_TOKEN` | (secret) | Token de déploiement |
+| `DEPLOY_TOKEN` | (secret) | Jeton des opérations administratives |
 
 ## Structure
 

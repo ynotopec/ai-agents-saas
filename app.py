@@ -323,7 +323,7 @@ def deploy_instance(subdomain: str, password: str | None = None,
         return {"error": str(e)}
 
 @app.get("/", response_class=HTMLResponse)
-def index(_: None = Depends(require_deploy_token)):
+def index():
     return HTMLResponse(CONTENT)
 
 @app.get("/api/instances")
@@ -331,7 +331,7 @@ def api_instances(_: None = Depends(require_deploy_token)):
     return JSONResponse(list_instances())
 
 @app.post("/api/deploy")
-def api_deploy(req: DeployRequest, _: None = Depends(require_deploy_token)):
+def api_deploy(req: DeployRequest):
     try:
         result = deploy_instance(req.subdomain,
                                  req.password.get_secret_value() if req.password else None,
@@ -500,11 +500,6 @@ CONTENT = """<!DOCTYPE html>
         .result { margin-top: 1rem; padding: 1rem; border-radius: 4px; }
         .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
         .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-        .instances { margin-top: 2rem; }
-        .instances h2 { margin-bottom: 1rem; }
-        .instance-item { background: #f8f9fa; padding: 1rem; border-radius: 4px; margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; }
-        .instance-item a { color: #1a73e8; text-decoration: none; }
-        .instance-item a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
@@ -518,7 +513,7 @@ CONTENT = """<!DOCTYPE html>
                     <input type="text" id="subdomain" name="subdomain" placeholder="ex: mon-projet" required>
                 </div>
                 <div class="form-group">
-                    <label for="instance-password">Mot de passe :</label>
+                    <label for="instance-password">Mot de passe de votre agent :</label>
                     <div class="password-row">
                         <input type="password" id="instance-password" autocomplete="new-password"
                                minlength="4" required aria-describedby="password-hint">
@@ -534,10 +529,6 @@ CONTENT = """<!DOCTYPE html>
                 <button type="submit" id="deploy-btn">Déployer</button>
             </form>
             <div id="result"></div>
-        </div>
-        <div class="instances">
-            <h2>Instances existantes</h2>
-            <div id="instances-list">Chargement...</div>
         </div>
     </div>
     <script>
@@ -581,7 +572,7 @@ CONTENT = """<!DOCTYPE html>
             try {
                 const resp = await fetch('/api/deploy', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Dashboard-Request': '1' },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
                 let data;
@@ -597,7 +588,6 @@ CONTENT = """<!DOCTYPE html>
                         passwordInput.type = confirmationInput.type = 'password';
                         passwordToggle.setAttribute('aria-pressed', 'false');
                         passwordToggle.setAttribute('aria-label', 'Afficher les mots de passe');
-                        loadInstances();
                     } else {
                         result.textContent = "❌ " + errorMsg;
                     }
@@ -612,25 +602,7 @@ CONTENT = """<!DOCTYPE html>
             }
         }
 
-        async function loadInstances() {
-            const list = document.getElementById('instances-list');
-            try {
-                const resp = await fetch('/api/instances');
-                const instances = await resp.json();
-                if (instances.length === 0) {
-                    list.innerHTML = '<p>Aucune instance.</p>';
-                    return;
-                }
-                list.innerHTML = instances.map(i =>
-                    '<div class="instance-item"><strong>' + i.subdomain + '</strong> → <a href="' + i.url + '" target="_blank">' + i.url + '</a></div>'
-                ).join('');
-            } catch (err) {
-                list.innerHTML = '<p>Erreur : ' + err.message + '</p>';
-            }
-        }
-
         document.getElementById('deploy-form').addEventListener('submit', deploy);
-        loadInstances();
     </script>
 </body>
 </html>"""

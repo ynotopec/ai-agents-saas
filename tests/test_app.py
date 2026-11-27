@@ -86,15 +86,10 @@ class TestInstancesEndpoint:
 class TestDeployEndpoint:
     """Tests for /api/deploy endpoint."""
 
-    def test_deploy_requires_authentication(self, client):
-        """POST /api/deploy should reject requests without the shared token."""
-        response = client.post("/api/deploy", json={"subdomain": "test", **VALID_PASSWORD})
-        assert response.status_code == 401
-
     @patch('app.k8s_post')
     def test_deploy_returns_success(self, mock_k8s_post, client):
         """POST /api/deploy should return success response when K8s calls succeed."""
-        response = client.post("/api/deploy", headers=AUTH_HEADERS, json={"subdomain": "test", **VALID_PASSWORD})
+        response = client.post("/api/deploy", json={"subdomain": "test", **VALID_PASSWORD})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -228,9 +223,12 @@ class TestChangePasswordEndpoint:
 def test_admin_routes_require_token(client, monkeypatch):
     assert client.get('/api/instances').status_code == 401
     assert client.post('/api/web-extract', json={'urls': []}).status_code == 401
-    assert client.get('/', auth=('admin', 'test-deploy-token')).status_code == 200
-    assert client.post('/api/deploy', auth=('admin', 'test-deploy-token'),
-                       json={'subdomain': 'x', **VALID_PASSWORD}).status_code == 403
+    page = client.get('/')
+    assert page.status_code == 200
+    assert 'www-authenticate' not in page.headers
+    assert '/api/instances' not in page.text
+    assert client.post('/api/change-password', auth=('admin', 'test-deploy-token'),
+                       json={'subdomain': 'x', 'new_password': 'chosen-password'}).status_code == 403
     monkeypatch.setattr(app_module, 'DEPLOY_TOKEN', '')
     assert client.get('/api/instances', headers=AUTH_HEADERS).status_code == 401
 
@@ -351,8 +349,7 @@ def test_reservation_conflict_stops_provisioning(client, monkeypatch):
 def test_browser_can_provision_and_gateway_is_optional(client, monkeypatch, expose, ingress_count):
     monkeypatch.setenv("EXPOSE_GATEWAY_INGRESS", expose)
     with patch("app.k8s_post") as create:
-        response = client.post("/api/deploy", auth=("admin", "test-deploy-token"),
-                               headers={"X-Dashboard-Request": "1"},
+        response = client.post("/api/deploy",
                                json={"subdomain": "web", **VALID_PASSWORD})
     assert response.is_success
     assert sum(call.args[0] == "ingresses" for call in create.call_args_list) == ingress_count

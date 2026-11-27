@@ -66,16 +66,15 @@ Le premier démarrage télécharge les dépendances Python dans un `emptyDir`; i
 
 ## 4. Utiliser l'API
 
-Les opérations qui modifient le cluster exigent le jeton `DEPLOY_TOKEN` dans l'en-tête `X-Deploy-Token` :
+Le formulaire et l’API de création sont publics. Le visiteur choisit le mot de passe de son nouvel agent.
 
 ```bash
 curl -X POST https://agents-saas.ailab.infocepo.com/api/deploy \
   -H 'Content-Type: application/json' \
-  -H 'X-Deploy-Token: <random-dashboard-token>' \
   -d '{"subdomain":"my-agent","password":"<mot-de-passe>","password_confirmation":"<mot-de-passe>"}'
 ```
 
-Dans le navigateur, utilisez le compte `admin` et le jeton comme mot de passe, sur HTTPS. L'endpoint `GET /health` reste public pour les probes Kubernetes.
+Réservez `DEPLOY_TOKEN` à l’administration de l’inventaire, des mots de passe et de l’extraction web. Conservez-le dans le Secret du dashboard. L'endpoint `GET /health` reste public pour les probes Kubernetes.
 
 ## Mise à jour du dashboard existant
 
