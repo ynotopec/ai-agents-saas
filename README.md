@@ -54,6 +54,14 @@ kubectl apply -f manifests/05-ingress.yaml -n demo1
 kubectl -n demo1 rollout status deploy/agents-saas --timeout=60s
 ```
 
+### Mettre à jour le dashboard existant
+
+```bash
+./scripts/update-dashboard.sh
+```
+
+La commande cible le dashboard dans `demo1`. Un second passage à état identique ne redémarre aucun pod. Les agents en place conservent leurs clés et leurs volumes. Voir la [procédure de vérification et de reprise](DEPLOY_GUIDE.md#mise-à-jour-du-dashboard-existant).
+
 ### Choisir le mot de passe à la création
 
 Le navigateur demande le compte `admin` et le jeton `DEPLOY_TOKEN` via HTTPS.

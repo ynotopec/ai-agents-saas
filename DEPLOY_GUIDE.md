@@ -77,27 +77,23 @@ curl -X POST https://agents-saas.ailab.infocepo.com/api/deploy \
 
 Dans le navigateur, utilisez le compte `admin` et le jeton comme mot de passe, sur HTTPS. L'endpoint `GET /health` reste public pour les probes Kubernetes.
 
-## Mise à jour
+## Mise à jour du dashboard existant
 
-Après une modification de `app.py`, recréez le ConfigMap puis redémarrez le Deployment :
+Depuis une copie du dépôt positionnée sur la révision à déployer, avec Python 3 et `kubectl` (Kustomize intégré), exécuter :
 
 ```bash
-kubectl create configmap agents-saas-app \
-  --from-file=app.py=app.py \
-  --from-file=hermes_runtime.py=hermes_runtime.py \
-  --from-file=release_policy.py=release_policy.py \
-  --dry-run=client -o yaml | kubectl apply -f - -n demo1
-kubectl -n demo1 rollout restart deployment/agents-saas
-kubectl -n demo1 rollout status deployment/agents-saas --timeout=180s
+./scripts/update-dashboard.sh
 ```
 
-## Migration de sécurité
+Le script affiche le contexte Kubernetes actif et cible `demo1/agents-saas`. Sur MicroK8s, utiliser au besoin `KUBECTL=microk8s.kubectl ./scripts/update-dashboard.sh`. Pour vérifier les prérequis et l’admission Kubernetes avant intervention, utiliser `./scripts/update-dashboard.sh --check`.
 
-1. Suspendre les créations pendant la mise à jour du dashboard et du script CLI. Réappliquer le Role et le Deployment, mettre à jour le ConfigMap applicatif et redémarrer le dashboard. Les anciens provisionneurs ne respectent pas les réservations de noms.
-2. Pour chaque instance existante, identifier le Deployment et ses PVC. Vérifier l’unicité du sous-domaine et les endpoints du Service avant d’ajouter le label `agent-hash` du pod à son sélecteur. Conserver le sélecteur immuable du Deployment existant.
-3. Générer une clé de passerelle distincte par instance. Mettre à jour le Secret référencé par l’agent, le dashboard, la WebUI et l’init de réconciliation, puis redémarrer le Deployment et mettre à jour les clients API. Vérifier le refus de l’ancienne clé. Les nouveaux Ingress de passerelle sont optionnels (`EXPOSE_GATEWAY_INGRESS=true` sur le dashboard). Examiner séparément les Ingress existants.
-4. Pour le LLM, préparer une nouvelle clé fournisseur. Placer la configuration et la clé dans un Secret, monter uniquement `config.yaml` et utiliser `secretKeyRef` pour `LLM_API_KEY`. Après vérification des instances et du dashboard avec la nouvelle clé, révoquer l’ancienne et retirer les anciennes ConfigMaps. Contrôler aussi les copies de configuration sur PVC et les anciennes révisions.
-5. Pour réutiliser un sous-domaine après suppression ou échec partiel, lire le champ `data.owner` de la ConfigMap `agent-domain-<sous-domaine>`. Inventorier les ressources de ce propriétaire et traiter ses PVC selon la politique de conservation. Supprimer la réservation en dernier, une fois le nom libéré.
+**Périmètre.** La commande met à jour le Deployment du dashboard, son ServiceAccount, son Role, son RoleBinding et la ConfigMap du code. Elle utilise le Secret et la ConfigMap de release déjà présents. Les Deployments Hermes, leurs clés, PVC, Services et Ingress ne sont pas ciblés. Les clés des agents déjà renouvelées restent valides. Les clients de l’ancienne route d’extraction du dashboard doivent en revanche respecter ses nouvelles conditions d’accès (voir ci-dessous).
+
+**Idempotence.** Kustomize nomme la ConfigMap d’après son contenu et écrit cette référence dans le template du pod. Le premier passage depuis l’ancienne installation déclenche un rollout du dashboard. À révision et état identiques, les passages suivants ne déclenchent aucun redémarrage. Un changement de code ou de template déclenche le rollout nécessaire. Le script ne lance ni `rollout restart` ni nettoyage des anciennes ConfigMaps.
+
+**Prérequis et reprise.** Le compte opérateur doit pouvoir lire le Deployment, le Secret `agents-saas-secrets` et la ConfigMap `agents-saas-release`, appliquer les objets ci-dessus et suivre le rollout. Le script contrôle la présence des deux clés du dashboard, le JSON de release et la validation serveur avant application. Il attend la disponibilité du Deployment pendant cinq minutes et retourne un code non nul en cas d’échec. L’initContainer existant doit toujours pouvoir installer ses dépendances Python. Après une erreur, corriger sa cause et relancer la même commande. Kubernetes peut avoir appliqué une partie du lot ; le passage suivant réconcilie les objets. Pour revenir à une révision antérieure équipée du script, relancer la commande depuis cette révision. Les versions antérieures à ce mécanisme utilisent leurs propres manifests et leur procédure de restauration.
+
+Pour une installation vierge, suivre les sections 1 à 3. La commande de mise à jour nécessite un dashboard existant.
 
 ### Extraction web
 
